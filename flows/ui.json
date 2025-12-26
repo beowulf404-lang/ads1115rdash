@@ -1,1 +1,92 @@
+[
+  {
+    "id": "tab_ui",
+    "type": "tab",
+    "label": "ADS1115 Dashboard UI",
+    "disabled": false,
+    "info": ""
+  },
+
+  {
+    "id": "ui_tab_main",
+    "type": "ui_tab",
+    "name": "Gauges",
+    "icon": "dashboard",
+    "order": 1
+  },
+  {
+    "id": "ui_group_main",
+    "type": "ui_group",
+    "name": "ADC Gauges",
+    "tab": "ui_tab_main",
+    "order": 1,
+    "disp": true,
+    "width": "12"
+  },
+
+  {
+    "id": "ui_template_gauges",
+    "type": "ui_template",
+    "z": "tab_ui",
+    "group": "ui_group_main",
+    "name": "Gauge Dashboard (placeholder)",
+    "order": 1,
+    "width": "12",
+    "height": "0",
+    "format": "<div style=\"padding:16px;font-weight:700\">Gauge UI will be inserted here.</div>",
+    "storeOutMessages": false,
+    "fwdInMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 560,
+    "y": 120,
+    "wires": [
+      ["fn_ui_actions"]
+    ]
+  },
+
+  {
+    "id": "lnk_in_dash_state",
+    "type": "link in",
+    "z": "tab_ui",
+    "name": "dash/state",
+    "links": ["lnk_out_dash_state"],
+    "x": 120,
+    "y": 120,
+    "wires": [["ui_template_gauges"]]
+  },
+
+  {
+    "id": "lnk_out_dash_state",
+    "type": "link out",
+    "z": "tab_adc_system",
+    "name": "dash/state",
+    "links": ["lnk_in_dash_state"],
+    "x": 980,
+    "y": 260,
+    "wires": []
+  },
+
+  {
+    "id": "lnk_in_dash_beep",
+    "type": "link in",
+    "z": "tab_ui",
+    "name": "dash/beep",
+    "links": ["lnk_out_dash_beep"],
+    "x": 120,
+    "y": 180,
+    "wires": [["ui_template_gauges"]]
+  },
+
+  {
+    "id": "lnk_out_dash_beep",
+    "type": "link out",
+    "z": "tab_adc_system",
+    "name": "dash/beep",
+    "links": ["lnk_in_dash_beep"],
+    "x": 980,
+    "y": 300,
+    "wires": []
+  }
+]
 
