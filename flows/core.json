@@ -1,1 +1,146 @@
+[
+  {
+    "id": "tab_adc_system",
+    "type": "tab",
+    "label": "ADS1115 Core Engine",
+    "disabled": false,
+    "info": "ADS1115 16ch core logic: math, alarms, state, APIs"
+  },
+
+  {
+    "id": "inj_boot",
+    "type": "inject",
+    "z": "tab_adc_system",
+    "name": "BOOT",
+    "props": [],
+    "once": true,
+    "onceDelay": 0.3,
+    "x": 120,
+    "y": 60,
+    "wires": [["fn_boot_init"]]
+  },
+
+  {
+    "id": "fn_boot_init",
+    "type": "function",
+    "z": "tab_adc_system",
+    "name": "Init defaults",
+    "outputs": 0,
+    "func": "const base={\n  adc_fullscale:4.096,\n  voltMult:{V3:3/4.096,V5:5/4.096,V12:12/4.096,V60:60/4.096},\n  currSens:{I5:0.185,I20:0.100,I30:0.066,I50:0.040,I100:0.020,I200:0.010},\n  vzero_default:2.5,\n  smooth_alpha_default:0.2,\n  formulas:[\"none\",\"V3\",\"V5\",\"V12\",\"V60\",\"I5\",\"I20\",\"I30\",\"I50\",\"I100\",\"I200\",\"CUSTOM\"],\n  alarm_modes:[\"off\",\"low\",\"high\",\"both\"]\n};\nflow.set('base',base);\n\nif(flow.get('alarmMute')==null)flow.set('alarmMute',false);\nif(flow.get('testMode')==null)flow.set('testMode',false);\nif(flow.get('reverseMode')==null)flow.set('reverseMode',false);\n\nlet map=flow.get('map');\nif(!map){\n  map={};\n  for(let i=0;i<16;i++){\n    map[`adc${i}`]={\n      formula:'none',\n      label:`adc${i}`,\n      unit:'',\n      clamp0:false,\n      smoothAlpha:base.smooth_alpha_default,\n      custom:{a:1,b:0,mode:'Vadc'},\n\n      gmin:0,\n      gmax:100,\n      bandColors:[\"#22c55e\",\"#84cc16\",\"#f59e0b\",\"#ef4444\"],\n      bandT1:25,\n      bandT2:60,\n      bandT3:85,\n\n      alarmMode:'off',\n      alarmLow:0,\n      alarmHigh:100,\n      alarmBeep:false\n    };\n  }\n  flow.set('map',map);\n}\n\nflow.set('vzero',flow.get('vzero')||{});\nflow.set('ema',flow.get('ema')||{});\nflow.set('lastMeas',flow.get('lastMeas')||{});\nflow.set('rawVadc',flow.get('rawVadc')||{});\n\nreturn null;"
+  },
+
+  {
+    "id": "inj_poll",
+    "type": "inject",
+    "z": "tab_adc_system",
+    "name": "Poll ADS (1s)",
+    "props": [{ "p": "payload" }],
+    "repeat": "1",
+    "once": true,
+    "onceDelay": 0.5,
+    "payload": 1,
+    "payloadType": "num",
+    "x": 120,
+    "y": 120,
+    "wires": [
+      [
+        "ads48_0","ads48_1","ads48_2","ads48_3",
+        "ads49_0","ads49_1","ads49_2","ads49_3",
+        "ads4a_0","ads4a_1","ads4a_2","ads4a_3",
+        "ads4b_0","ads4b_1","ads4b_2","ads4b_3"
+      ]
+    ]
+  },
+
+  {
+    "id": "fn_calc",
+    "type": "function",
+    "z": "tab_adc_system",
+    "name": "Calc + EMA + Alarm",
+    "outputs": 2,
+    "func": "const base=flow.get('base');\nconst map=flow.get('map')||{};\nconst vzero=flow.get('vzero')||{};\nconst ema=flow.get('ema')||{};\nconst last=flow.get('lastMeas')||{};\n\nconst m=(msg.topic||'').match(/^adc(\\d+)$/);\nif(!m)return null;\nconst adc=`adc${m[1]}`;\nconst spec=map[adc];\nif(!spec)return null;\n\nconst Vadc=Number(msg.payload);\nif(!Number.isFinite(Vadc))return null;\nflow.get('rawVadc')[adc]=Vadc;\n\nlet val=null;\n\nif(spec.formula.startsWith('V')){\n  val=Vadc*base.voltMult[spec.formula];\n}\nelse if(spec.formula.startsWith('I')){\n  const vz=(vzero[adc]!=null)?vzero[adc]:base.vzero_default;\n  val=(Vadc-vz)/base.currSens[spec.formula];\n  if(spec.clamp0 && val<0) val=0;\n}\nelse if(spec.formula==='CUSTOM'){\n  const vz=(vzero[adc]!=null)?vzero[adc]:base.vzero_default;\n  const x=(spec.custom.mode==='Vadc-Vzero')?(Vadc-vz):Vadc;\n  val=spec.custom.a*x+spec.custom.b;\n}\n\nif(!Number.isFinite(val))return null;\n\nconst a=Math.max(0.01,Math.min(1,Number(spec.smoothAlpha)||0.2));\nema[adc]=(ema[adc]==null)?val:(ema[adc]+a*(val-ema[adc]));\nval=Number(ema[adc].toFixed(2));\n\nlet alarm=false;\nif(spec.alarmMode!=='off'){\n  if((spec.alarmMode==='low'||spec.alarmMode==='both') && val<spec.alarmLow) alarm=true;\n  if((spec.alarmMode==='high'||spec.alarmMode==='both') && val>spec.alarmHigh) alarm=true;\n}\n\nlast[adc]={value:val,unit:spec.unit,alarm,ts:Date.now()};\nflow.set('ema',ema);\nflow.set('lastMeas',last);\n\nif(alarm && spec.alarmBeep && !flow.get('alarmMute') && !flow.get('testMode')){\n  return [{topic:'dash/beep',payload:{beep:true,freq:500,ms:250}},null];\n}\n\nreturn [null,null];"
+  },
+
+  {
+    "id": "fn_dash_state",
+    "type": "function",
+    "z": "tab_adc_system",
+    "name": "Build dashboard state",
+    "outputs": 1,
+    "func": "const map=flow.get('map')||{};\nconst last=flow.get('lastMeas')||{};\nconst items=[];\n\nfor(let i=0;i<16;i++){\n  const adc=`adc${i}`;\n  const s=map[adc]||{};\n  const lm=last[adc]||{};\n  items.push({\n    adc,\n    label:s.label||adc,\n    unit:s.unit||'',\n    value:(lm.value!=null?lm.value:null),\n    alarm:!!lm.alarm,\n    gmin:s.gmin,\n    gmax:s.gmax,\n    bandColors:s.bandColors,\n    bandT1:s.bandT1,\n    bandT2:s.bandT2,\n    bandT3:s.bandT3\n  });\n}\n\nmsg.topic='dash/state';\nmsg.payload={\n  items,\n  alarmMute:!!flow.get('alarmMute'),\n  testMode:!!flow.get('testMode'),\n  reverseMode:!!flow.get('reverseMode')\n};\nreturn msg;"
+  },
+
+  {
+    "id": "fn_ui_actions",
+    "type": "function",
+    "z": "tab_adc_system",
+    "name": "UI actions",
+    "outputs": 0,
+    "func": "if(msg.topic==='alarm/mute/toggle'){\n  flow.set('alarmMute',!flow.get('alarmMute'));\n}\nif(msg.topic==='ui/reverse/toggle'){\n  flow.set('reverseMode',!flow.get('reverseMode'));\n}\nreturn null;"
+  },
+
+  {
+    "id": "ads48_0","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x48 CH0","chip":"1115","address":"0x48","inputs":"0","gain":"1","property":"payload","x":120,"y":220,"wires":[["chg0"]]},
+  {"id":"chg0","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc0","tot":"str"}],"x":300,"y":220,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads48_1","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x48 CH1","chip":"1115","address":"0x48","inputs":"1","gain":"1","property":"payload","x":120,"y":250,"wires":[["chg1"]]},
+  {"id":"chg1","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc1","tot":"str"}],"x":300,"y":250,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads48_2","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x48 CH2","chip":"1115","address":"0x48","inputs":"2","gain":"1","property":"payload","x":120,"y":280,"wires":[["chg2"]]},
+  {"id":"chg2","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc2","tot":"str"}],"x":300,"y":280,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads48_3","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x48 CH3","chip":"1115","address":"0x48","inputs":"3","gain":"1","property":"payload","x":120,"y":310,"wires":[["chg3"]]},
+  {"id":"chg3","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc3","tot":"str"}],"x":300,"y":310,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads49_0","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x49 CH0","chip":"1115","address":"0x49","inputs":"0","gain":"1","property":"payload","x":120,"y":340,"wires":[["chg4"]]},
+  {"id":"chg4","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc4","tot":"str"}],"x":300,"y":340,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads49_1","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x49 CH1","chip":"1115","address":"0x49","inputs":"1","gain":"1","property":"payload","x":120,"y":370,"wires":[["chg5"]]},
+  {"id":"chg5","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc5","tot":"str"}],"x":300,"y":370,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads49_2","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x49 CH2","chip":"1115","address":"0x49","inputs":"2","gain":"1","property":"payload","x":120,"y":400,"wires":[["chg6"]]},
+  {"id":"chg6","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc6","tot":"str"}],"x":300,"y":400,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads49_3","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x49 CH3","chip":"1115","address":"0x49","inputs":"3","gain":"1","property":"payload","x":120,"y":430,"wires":[["chg7"]]},
+  {"id":"chg7","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc7","tot":"str"}],"x":300,"y":430,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads4a_0","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x4A CH0","chip":"1115","address":"0x4a","inputs":"0","gain":"1","property":"payload","x":120,"y":460,"wires":[["chg8"]]},
+  {"id":"chg8","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc8","tot":"str"}],"x":300,"y":460,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads4a_1","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x4A CH1","chip":"1115","address":"0x4a","inputs":"1","gain":"1","property":"payload","x":120,"y":490,"wires":[["chg9"]]},
+  {"id":"chg9","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc9","tot":"str"}],"x":300,"y":490,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads4a_2","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x4A CH2","chip":"1115","address":"0x4a","inputs":"2","gain":"1","property":"payload","x":120,"y":520,"wires":[["chg10"]]},
+  {"id":"chg10","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc10","tot":"str"}],"x":300,"y":520,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads4a_3","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x4A CH3","chip":"1115","address":"0x4a","inputs":"3","gain":"1","property":"payload","x":120,"y":550,"wires":[["chg11"]]},
+  {"id":"chg11","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc11","tot":"str"}],"x":300,"y":550,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads4b_0","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x4B CH0","chip":"1115","address":"0x4b","inputs":"0","gain":"1","property":"payload","x":120,"y":580,"wires":[["chg12"]]},
+  {"id":"chg12","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc12","tot":"str"}],"x":300,"y":580,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads4b_1","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x4B CH1","chip":"1115","address":"0x4b","inputs":"1","gain":"1","property":"payload","x":120,"y":610,"wires":[["chg13"]]},
+  {"id":"chg13","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc13","tot":"str"}],"x":300,"y":610,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads4b_2","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x4B CH2","chip":"1115","address":"0x4b","inputs":"2","gain":"1","property":"payload","x":120,"y":640,"wires":[["chg14"]]},
+  {"id":"chg14","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc14","tot":"str"}],"x":300,"y":640,"wires":[["fn_calc","fn_dash_state"]]},
+
+  {
+    "id": "ads4b_3","type":"ads1x15_i2c","z":"tab_adc_system","name":"ADS 0x4B CH3","chip":"1115","address":"0x4b","inputs":"3","gain":"1","property":"payload","x":120,"y":670,"wires":[["chg15"]]},
+  {"id":"chg15","type":"change","z":"tab_adc_system","rules":[{"t":"set","p":"topic","pt":"msg","to":"adc15","tot":"str"}],"x":300,"y":670,"wires":[["fn_calc","fn_dash_state"]]}
+]
 
