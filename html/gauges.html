@@ -1,1 +1,170 @@
 
+<!-- ADS1115 Dashboard Gauges -->
+<div ng-class="{'darkWrap': reverseMode}">
+
+  <!-- HEADER BAR -->
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 12px 0;">
+    <button class="nrdb-btn"
+      onclick="window.open('/setup','_blank')"
+      style="padding:10px 14px;border-radius:12px;font-weight:900;">
+      Setup
+    </button>
+
+    <button class="nrdb-btn" ng-click="send({topic:'ui/reverse/toggle'})"
+      style="padding:10px 14px;border-radius:12px;font-weight:900;">
+      Reverse: <span>{{reverseMode?'ON':'OFF'}}</span>
+    </button>
+
+    <button class="nrdb-btn" ng-click="send({topic:'alarm/mute/toggle'})"
+      style="padding:10px 14px;border-radius:12px;font-weight:900;">
+      Alarm Defeat: <span>{{alarmMute?'MUTED':'ON'}}</span>
+    </button>
+
+    <span ng-if="testMode"
+      style="padding:6px 10px;border-radius:999px;background:#fee2e2;color:#991b1b;font-weight:900;">
+      TEST MODE
+    </span>
+  </div>
+
+  <!-- STYLES -->
+  <style>
+    .grid16{
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:14px;
+    }
+    @media (max-width:1100px){ .grid16{ grid-template-columns:repeat(3,1fr);} }
+    @media (max-width:820px){ .grid16{ grid-template-columns:repeat(2,1fr);} }
+    @media (max-width:520px){ .grid16{ grid-template-columns:repeat(1,1fr);} }
+
+    .card{
+      border-radius:16px;
+      padding:12px;
+      background:#fff;
+      box-shadow:0 6px 20px rgba(0,0,0,.08);
+      position:relative;
+    }
+    .card.alarm::after{
+      content:'';
+      position:absolute;
+      inset:0;
+      border-radius:16px;
+      box-shadow:0 0 0 0 rgba(239,68,68,.8);
+      animation:alarmPulse 1.5s infinite;
+      pointer-events:none;
+    }
+    @keyframes alarmPulse{
+      0%{ box-shadow:0 0 0 0 rgba(239,68,68,.8); }
+      70%{ box-shadow:0 0 0 12px rgba(239,68,68,0); }
+      100%{ box-shadow:0 0 0 0 rgba(239,68,68,0); }
+    }
+
+    .title{ font-weight:800; font-size:14px; }
+    .value{ font-size:26px; font-weight:900; }
+    .unit{ font-size:12px; color:#666; }
+
+    /* DARK MODE */
+    .darkWrap{
+      background:#000;
+      padding:10px;
+      border-radius:14px;
+    }
+    .darkWrap .card{
+      background:#0b0b0b;
+      color:#fff;
+      box-shadow:none;
+      border:1px solid rgba(255,255,255,.1);
+    }
+    .darkWrap .unit{ color:#aaa; }
+  </style>
+
+  <!-- GAUGE GRID -->
+  <div class="grid16">
+    <div ng-repeat="g in items" class="card" ng-class="{alarm:g.alarm}">
+      <div class="title">{{g.label}}</div>
+
+      <svg viewBox="0 0 140 110" width="100%">
+        <g transform="rotate(90 70 70)">
+
+          <!-- background -->
+          <path d="{{g._bgArc}}" fill="none"
+                stroke="{{reverseMode?'rgba(255,255,255,.15)':'#e5e7eb'}}"
+                stroke-width="14" stroke-linecap="round"/>
+
+          <!-- bands -->
+          <path d="{{g._arc1}}" fill="none" stroke="{{g.bandColors[0]}}" stroke-width="14" stroke-linecap="round"/>
+          <path d="{{g._arc2}}" fill="none" stroke="{{g.bandColors[1]}}" stroke-width="14" stroke-linecap="round"/>
+          <path d="{{g._arc3}}" fill="none" stroke="{{g.bandColors[2]}}" stroke-width="14" stroke-linecap="round"/>
+          <path d="{{g._arc4}}" fill="none" stroke="{{g.bandColors[3]}}" stroke-width="14" stroke-linecap="round"/>
+
+          <!-- value arc -->
+          <path d="{{g._valArc}}" fill="none"
+                stroke="{{reverseMode?'#ff0000':'#111'}}"
+                stroke-width="4" stroke-linecap="round"/>
+        </g>
+
+        <!-- text -->
+        <text x="70" y="70" text-anchor="middle" class="value">
+          {{g.value==null?'--':(g.value | number:2)}}
+        </text>
+        <text x="70" y="88" text-anchor="middle" class="unit">{{g.unit}}</text>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(scope){
+  function polar(cx,cy,r,a){
+    const rad=(a-90)*Math.PI/180;
+    return {x:cx+r*Math.cos(rad),y:cy+r*Math.sin(rad)};
+  }
+  function arc(cx,cy,r,a0,a1){
+    const s=polar(cx,cy,r,a1),e=polar(cx,cy,r,a0);
+    const l=(a1-a0)<=180?0:1;
+    return `M ${s.x} ${s.y} A ${r} ${r} 0 ${l} 0 ${e.x} ${e.y}`;
+  }
+
+  const A0=-210,A1=30;
+  const ang=f=>A0+(A1-A0)*Math.max(0,Math.min(1,f));
+
+  function build(){
+    (scope.items||[]).forEach(g=>{
+      const span=(g.gmax-g.gmin)||1;
+      const f1=(g.bandT1-g.gmin)/span;
+      const f2=(g.bandT2-g.gmin)/span;
+      const f3=(g.bandT3-g.gmin)/span;
+
+      g._bgArc=arc(70,70,48,ang(0),ang(1));
+      g._arc1=arc(70,70,48,ang(0),ang(f1));
+      g._arc2=arc(70,70,48,ang(f1),ang(f2));
+      g._arc3=arc(70,70,48,ang(f2),ang(f3));
+      g._arc4=arc(70,70,48,ang(f3),ang(1));
+
+      if(g.value!=null){
+        const fv=(g.value-g.gmin)/span;
+        g._valArc=arc(70,70,40,ang(0),ang(fv));
+      } else g._valArc='';
+    });
+  }
+
+  scope.$watch('msg',msg=>{
+    if(!msg) return;
+    if(msg.topic==='dash/state'){
+      scope.items=msg.payload.items||[];
+      scope.alarmMute=msg.payload.alarmMute;
+      scope.testMode=msg.payload.testMode;
+      scope.reverseMode=msg.payload.reverseMode;
+      build();
+    }
+    if(msg.topic==='dash/beep' && msg.payload?.beep){
+      const ctx=new (window.AudioContext||window.webkitAudioContext)();
+      const o=ctx.createOscillator();
+      o.frequency.value=500;
+      o.connect(ctx.destination);
+      o.start();
+      setTimeout(()=>o.stop(),250);
+    }
+  });
+})(scope);
+</script>
